@@ -1,0 +1,400 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE nta PUBLIC '-//Uppaal Team//DTD Flat System 1.6//EN' 'http://www.it.uu.se/research/group/darts/uppaal/flat-1_6.dtd'>
+<nta>
+	<declaration>// scheduling properties
+int disturbance_time_min = 20;
+int disturbance_time_max = 50;
+
+double new_max_height = 3.0;
+int new_Tp = 2;
+int new_Ts = 1;
+
+clock global_t;
+
+// ball
+
+clock x =  4.0;              // initial position
+clock v = -1.0;              // initial velocity (m/ds)
+
+const double g = 0.0981;     // acceleration (constant, m/ds^2)
+const double c = 0.90;        // coefficient of restitution
+
+// sensor and paddle
+
+const double initH = 5.0;
+double H = initH;        // maximum allowed height of the ball
+const double f = 1.1;        // paddle's "bounce factor"
+
+int Tp = 4;           // sampling period for paddle (ds)
+int Ts = 2;            // sampling period for sensor
+clock paddle_time;
+clock sensor_time;
+// sched
+const double sched_delay_time = 0.2;
+
+broadcast chan startPaddle;
+broadcast chan startSensor;
+broadcast chan paddleDone;
+broadcast chan sensorDone;
+broadcast chan bounce;
+broadcast chan disturbed;
+
+bool has_disturbed = false;
+bool disturbance_recognized = false;
+
+double mh = 0.0;             // maximum height ball will attain if uncontrolled
+double tr = 0.0;             // time remaining until H is exceeded
+
+// helper functions
+
+// use current x and v to predict maximum height of upward traveling ball
+double max_height()
+{
+    double t = fmax(0.0, v) / g;              // consider upward motion only
+    if (has_disturbed &amp;&amp; !disturbance_recognized){
+        disturbance_recognized = true;
+        Tp = new_Tp;
+        Ts = new_Ts;
+    }
+    return (-0.5 * g * t * t) + (v * t) + x;
+}
+
+// returns smallest root of ax^2 + bx + c = 0 (under certain conditions)
+double qsolve(double a, double b, double c)
+{
+    double k = fmax(0.0, b*b - 4*a*c); // okay to overpredict when negative
+    return (-b - sqrt(k))/(2*a);       // (happens when H can't be reached)
+}
+
+// timing remaining until height H is exceeded
+double time_remaining()
+{
+    double t = qsolve(0.5 * g, -v, H - x);
+    return t;
+}
+
+// should the paddle be activiated (yes/no)?
+bool activate()
+{
+    bool upward = (1.0 * v) &gt;= 0.0;          // ball is moving upward
+    bool will_exceed = mh &gt; H;    // ball will eventually exceed H
+    bool now_urgent = (tr * 0.6) &lt; Tp;    // last chance before H exceeded
+    
+    return upward &amp; will_exceed &amp; now_urgent;
+}</declaration>
+	<template>
+		<name>Monitor</name>
+		<location id="id0" x="-170" y="0">
+			<name x="-180" y="-34">bad</name>
+		</location>
+		<location id="id1" x="0" y="0">
+		</location>
+		<init ref="id1"/>
+		<transition id="id2">
+			<source ref="id1"/>
+			<target ref="id1"/>
+			<label kind="guard" x="18" y="-51">!activate()</label>
+			<label kind="synchronisation" x="18" y="-34">startPaddle?</label>
+			<nail x="136" y="-34"/>
+			<nail x="136" y="17"/>
+		</transition>
+		<transition id="id3">
+			<source ref="id1"/>
+			<target ref="id0"/>
+			<label kind="guard" x="-136" y="-42">activate() &amp;&amp; H != initH</label>
+			<label kind="synchronisation" x="-136" y="-25">startPaddle?</label>
+		</transition>
+	</template>
+	<template>
+		<name>Monitor2</name>
+		<location id="id4" x="-93" y="0">
+			<name x="-136" y="-34">bad</name>
+		</location>
+		<location id="id5" x="0" y="0">
+			<label kind="invariant" x="-10" y="17">x &lt;= H</label>
+		</location>
+		<init ref="id5"/>
+		<transition id="id6">
+			<source ref="id5"/>
+			<target ref="id4"/>
+			<label kind="guard" x="-75" y="-34">x &gt;= H</label>
+		</transition>
+	</template>
+	<template>
+		<name>Disturbance</name>
+		<declaration>
+clock disturbance_timer = 0.0;
+
+void do_disturbance(){
+    has_disturbed := true;
+    H := new_max_height;
+}</declaration>
+		<location id="id7" x="-161" y="-280">
+		</location>
+		<location id="id8" x="-161" y="-195">
+			<committed/>
+		</location>
+		<location id="id9" x="-161" y="-93">
+		</location>
+		<location id="id10" x="0" y="0">
+			<label kind="invariant" x="-102" y="51">disturbance_timer &lt;= disturbance_time_max</label>
+		</location>
+		<init ref="id10"/>
+		<transition id="id11">
+			<source ref="id8"/>
+			<target ref="id7"/>
+			<label kind="synchronisation" x="-127" y="-280">disturbed!</label>
+			<label kind="assignment" x="-127" y="-263">do_disturbance()</label>
+		</transition>
+		<transition id="id12">
+			<source ref="id9"/>
+			<target ref="id8"/>
+			<label kind="synchronisation" x="-136" y="-136">bounce?</label>
+		</transition>
+		<transition id="id13">
+			<source ref="id10"/>
+			<target ref="id9"/>
+			<label kind="guard" x="-518" y="-51">disturbance_timer &gt;= disturbance_time_min</label>
+		</transition>
+	</template>
+	<template>
+		<name>Paddle</name>
+		<declaration>double paddle_runtime = 0.25;
+clock paddle_run_clock = 0;</declaration>
+		<location id="id14" x="969" y="510">
+			<name x="943" y="468">paddle</name>
+		</location>
+		<location id="id15" x="969" y="612">
+			<label kind="invariant" x="959" y="629">paddle_run_clock &lt;= paddle_runtime &amp;&amp;
+paddle_run_clock' == 1</label>
+		</location>
+		<init ref="id14"/>
+		<transition id="id16">
+			<source ref="id15"/>
+			<target ref="id14"/>
+			<label kind="guard" x="1071" y="527">paddle_run_clock &gt;= paddle_runtime</label>
+			<label kind="synchronisation" x="969" y="544">paddleDone!</label>
+		</transition>
+		<transition id="id17">
+			<source ref="id14"/>
+			<target ref="id15"/>
+			<label kind="guard" x="1054" y="561">activate()</label>
+			<label kind="synchronisation" x="1054" y="578">startPaddle?</label>
+			<label kind="assignment" x="1054" y="595">v := -f * v,
+paddle_run_clock := 0</label>
+			<nail x="1028" y="578"/>
+		</transition>
+		<transition id="id18">
+			<source ref="id14"/>
+			<target ref="id15"/>
+			<label kind="guard" x="748" y="569">!activate()</label>
+			<label kind="synchronisation" x="748" y="586">startPaddle?</label>
+			<label kind="assignment" x="739" y="603">paddle_run_clock := 0</label>
+			<nail x="884" y="586"/>
+		</transition>
+	</template>
+	<template>
+		<name>Scheduler</name>
+		<declaration>clock sched_delay_clock = 0;
+
+void set_times(){
+    if (paddle_time &gt;= Tp){
+        paddle_time = Tp;
+    }
+    if (sensor_time &gt;= Ts){
+        sensor_time = Ts;
+    }
+}</declaration>
+		<location id="id19" x="-17" y="-314">
+		</location>
+		<location id="id20" x="-799" y="-306">
+		</location>
+		<location id="id21" x="-127" y="-314">
+			<committed/>
+		</location>
+		<location id="id22" x="-705" y="-306">
+			<committed/>
+		</location>
+		<location id="id23" x="-705" y="-178">
+			<urgent/>
+		</location>
+		<location id="id24" x="-408" y="-178">
+			<label kind="invariant" x="-578" y="-136">paddle_time &lt;= Tp &amp;&amp;
+sensor_time &lt;= Ts</label>
+		</location>
+		<location id="id25" x="-136" y="-178">
+			<urgent/>
+		</location>
+		<init ref="id24"/>
+		<transition id="id26">
+			<source ref="id19"/>
+			<target ref="id25"/>
+			<label kind="synchronisation" x="-118" y="-263">sensorDone?</label>
+		</transition>
+		<transition id="id27">
+			<source ref="id25"/>
+			<target ref="id22"/>
+			<label kind="guard" x="-425" y="-238">paddle_time &gt;= Tp</label>
+			<label kind="assignment" x="-687" y="-242">paddle_time := 0</label>
+		</transition>
+		<transition id="id28">
+			<source ref="id23"/>
+			<target ref="id21"/>
+			<label kind="guard" x="-484" y="-280">sensor_time &gt;= Ts</label>
+			<label kind="assignment" x="-773" y="-289">sensor_time := 0</label>
+		</transition>
+		<transition id="id29">
+			<source ref="id20"/>
+			<target ref="id23"/>
+			<label kind="synchronisation" x="-875" y="-229">paddleDone?</label>
+		</transition>
+		<transition id="id30">
+			<source ref="id21"/>
+			<target ref="id19"/>
+			<label kind="synchronisation" x="-109" y="-331">startSensor!</label>
+		</transition>
+		<transition id="id31">
+			<source ref="id22"/>
+			<target ref="id20"/>
+			<label kind="synchronisation" x="-782" y="-357">startPaddle!</label>
+		</transition>
+		<transition id="id32">
+			<source ref="id25"/>
+			<target ref="id21"/>
+			<label kind="guard" x="-110" y="-263">sensor_time &gt;= Ts</label>
+			<label kind="assignment" x="-131" y="-246">sensor_time := 0</label>
+		</transition>
+		<transition id="id33">
+			<source ref="id24"/>
+			<target ref="id21"/>
+			<label kind="guard" x="-382" y="-255">sensor_time &gt;= Ts</label>
+			<label kind="assignment" x="-390" y="-246">sensor_time := 0</label>
+		</transition>
+		<transition id="id34">
+			<source ref="id24"/>
+			<target ref="id22"/>
+			<label kind="guard" x="-663" y="-280">paddle_time &gt;= Tp</label>
+			<label kind="assignment" x="-687" y="-242">paddle_time := 0</label>
+		</transition>
+		<transition id="id35">
+			<source ref="id23"/>
+			<target ref="id22"/>
+			<label kind="guard" x="-714" y="-229">paddle_time &gt;= Tp</label>
+			<label kind="assignment" x="-739" y="-263">paddle_time := 0</label>
+		</transition>
+		<transition id="id36">
+			<source ref="id23"/>
+			<target ref="id24"/>
+			<label kind="guard" x="-799" y="-93">paddle_time &lt;= Tp &amp;&amp;
+sensor_time &lt;= Ts</label>
+		</transition>
+		<transition id="id37">
+			<source ref="id25"/>
+			<target ref="id24"/>
+			<label kind="guard" x="-323" y="-127">paddle_time &lt;= Tp &amp;&amp;
+sensor_time &lt;= Ts</label>
+		</transition>
+	</template>
+	<template>
+		<name>Ball</name>
+		<declaration>void apply_disturbance(){
+    // todo
+}</declaration>
+		<location id="id38" x="68" y="0">
+			<name x="51" y="-42">ball</name>
+			<label kind="invariant" x="-51" y="-25">x' == v &amp;&amp;
+v' == -g &amp;&amp;
+x &gt;= 0</label>
+		</location>
+		<location id="id39" x="0" y="-204">
+			<committed/>
+		</location>
+		<init ref="id39"/>
+		<transition id="id40">
+			<source ref="id39"/>
+			<target ref="id38"/>
+			<label kind="assignment" x="18" y="-102">v:= v + random(0.1),
+x:= x + random(1.0)</label>
+		</transition>
+		<transition id="id41">
+			<source ref="id38"/>
+			<target ref="id38"/>
+			<label kind="guard" x="136" y="-25">x == 0 &amp;&amp; v &lt; 0</label>
+			<label kind="synchronisation" x="136" y="17">bounce!</label>
+			<label kind="assignment" x="136" y="0">v := -c * v</label>
+			<nail x="119" y="-25"/>
+			<nail x="119" y="26"/>
+		</transition>
+	</template>
+	<template>
+		<name>Sensor</name>
+		<declaration>double sensor_runtime = 0.25;
+clock sensor_run_clock = 0;</declaration>
+		<location id="id42" x="-187" y="-25">
+			<label kind="invariant" x="-197" y="-8">sensor_run_clock &lt;= sensor_runtime &amp;&amp;
+sensor_run_clock' == 1</label>
+		</location>
+		<location id="id43" x="-297" y="-76">
+			<name x="-323" y="-118">sensor</name>
+		</location>
+		<init ref="id43"/>
+		<transition id="id44">
+			<source ref="id42"/>
+			<target ref="id43"/>
+			<label kind="guard" x="-408" y="-51">sensor_run_clock &gt;= sensor_runtime</label>
+			<label kind="synchronisation" x="-408" y="-34">sensorDone!</label>
+			<nail x="-263" y="25"/>
+		</transition>
+		<transition id="id45">
+			<source ref="id43"/>
+			<target ref="id42"/>
+			<label kind="synchronisation" x="-144" y="-119">startSensor?</label>
+			<label kind="assignment" x="-144" y="-102">mh := max_height(),
+tr := time_remaining(),
+sensor_run_clock := 0</label>
+		</transition>
+	</template>
+	<system>
+// Modeling combinations:
+
+// system Ball;
+// system Ball, Sensor;
+// system Ball, Paddle;
+
+//  system Ball, Sensor, Timed_paddle;
+system Ball, Sensor, Paddle, Scheduler, Disturbance, Monitor;
+//system Ball, Sensor, Paddle, Scheduler, Monitor2;
+//system Ball, Sensor, Paddle, Scheduler;</system>
+	<queries>
+		<option key="--beta" value="0.01"/>
+		<option key="--alpha" value="0.01"/>
+		<option key="--discretization" value="0.001"/>
+		<option key="--epsilon" value="0.01"/>
+		<option key="--diagnostic" value="0"/>
+		<query>
+			<formula>simulate[&lt;=100] { x, v, paddle_time / Tp, H, mh, tr}</formula>
+			<comment/>
+		</query>
+		<query>
+			<formula>simulate[&lt;=100; 10] { x, H}</formula>
+			<comment/>
+		</query>
+		<query>
+			<formula>simulate[&lt;=100] { x, v, mh, tr }</formula>
+			<comment>For use with "system Ball, Sensor" (sensor sets mh and tr)</comment>
+		</query>
+		<query>
+			<formula>Pr [&lt;= 100 ]([] H - x &gt;= 0)</formula>
+			<comment>Is the ball always at or under the threshold?</comment>
+			<option key="--beta" value="0.01"/>
+			<option key="--alpha" value="0.01"/>
+			<option key="--discretization" value="0.001"/>
+			<option key="--epsilon" value="0.01"/>
+			<option key="--diagnostic" value="-1"/>
+		</query>
+		<query>
+			<formula>Pr [&lt;= 100 ](&lt;&gt; H - x &lt; 0)</formula>
+			<comment>does the ball ever exceed the threshold?</comment>
+		</query>
+	</queries>
+</nta>
